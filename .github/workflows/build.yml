@@ -19,6 +19,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build
         run: ./gradlew --no-daemon assembleDebug
+      - name: Render dashboard previews
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-previews
+          path: app/build/previews/*.png
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk TibberWidget.apk
       - uses: actions/upload-artifact@v4
