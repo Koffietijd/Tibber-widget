@@ -240,16 +240,16 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         val titleRect = RectF(inner.left, inner.top, inner.right, inner.top + 7f * u)
         text(if (hasTomorrow) "Prijzen vandaag & morgen" else "Prijzen vandaag", RectF(titleRect.left, titleRect.top, titleRect.left + titleRect.width() * 0.55f, titleRect.bottom), textMain, bold = true)
         if (!hasTomorrow) {
-            text("Morgen beschikbaar rond 13:00", RectF(titleRect.left + titleRect.width() * 0.55f, titleRect.top + titleRect.height() * 0.2f, titleRect.right, titleRect.bottom), textSub, align = Paint.Align.RIGHT)
-        } else {
-            legend(RectF(titleRect.left + titleRect.width() * 0.55f, titleRect.top + titleRect.height() * 0.25f, titleRect.right, titleRect.bottom - titleRect.height() * 0.1f))
+            text("Morgen beschikbaar rond 13:00", RectF(titleRect.left + titleRect.width() * 0.58f, titleRect.top + titleRect.height() * 0.2f, titleRect.right, titleRect.bottom), textSub, align = Paint.Align.RIGHT)
         }
+        val legendRect = RectF(inner.left, titleRect.bottom + 1f * u, inner.right, titleRect.bottom + 4.2f * u)
+        legend(legendRect)
         if (points.isEmpty()) {
             text("Geen prijsgegevens", RectF(inner.left, titleRect.bottom, inner.right, inner.bottom), textSub, align = Paint.Align.CENTER)
             return
         }
 
-        val plot = RectF(inner.left + 10f * u, titleRect.bottom + 2f * u, inner.right, inner.bottom - 4.5f * u)
+        val plot = RectF(inner.left + 10f * u, legendRect.bottom + 3.5f * u, inner.right, inner.bottom - 4.5f * u)
         val minV = min(0.0, points.minOf { it.total })
         val maxV = niceCeil(points.maxOf { it.total })
         val range = (maxV - minV).takeIf { it > 0 } ?: 1.0
@@ -332,9 +332,9 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         val titleRect = RectF(inner.left, inner.top, inner.right, inner.top + 6.5f * u)
         val totalKwh = data.sumOf { it.kwh ?: 0.0 }
         val totalCost = data.sumOf { it.cost ?: 0.0 }
-        text("Verbruik per uur · laatste 24 uur", RectF(titleRect.left, titleRect.top, titleRect.left + titleRect.width() * 0.6f, titleRect.bottom), textMain, bold = true)
+        text("Verbruik per uur · laatste 24 uur", RectF(titleRect.left, titleRect.top, titleRect.left + titleRect.width() * 0.56f, titleRect.bottom), textMain, bold = true)
         if (data.isNotEmpty()) {
-            text("${kwh(totalKwh)} · ${money(totalCost, home.currency)}", RectF(titleRect.left + titleRect.width() * 0.6f, titleRect.top, titleRect.right, titleRect.bottom), accent, bold = true, align = Paint.Align.RIGHT)
+            text("${kwh(totalKwh)} · ${money(totalCost, home.currency)}", RectF(titleRect.left + titleRect.width() * 0.62f, titleRect.top, titleRect.right, titleRect.bottom), accent, bold = true, align = Paint.Align.RIGHT)
         }
         if (data.isEmpty()) {
             text("Nog geen verbruiksgegevens", RectF(inner.left, titleRect.bottom, inner.right, inner.bottom), textSub, align = Paint.Align.CENTER)
@@ -527,15 +527,25 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
     private fun legend(r: RectF) {
         val levels = listOf("VERY_CHEAP", "CHEAP", "NORMAL", "EXPENSIVE", "VERY_EXPENSIVE")
         val labels = listOf("zeer goedkoop", "goedkoop", "normaal", "duur", "zeer duur")
-        val n = levels.size
-        val w = r.width() / n
+        val dot = r.height() * 0.55f
+        val spacing = 2.5f * u
+        // Eén lettergrootte voor alle labels, zodat alles in één regel past.
+        textPaint.typeface = normalTf
+        var size = r.height() / 1.15f
+        textPaint.textSize = size
+        val needed = labels.sumOf { textPaint.measureText(it).toDouble() }.toFloat() + levels.size * (dot + 0.8f * u) + (levels.size - 1) * spacing
+        if (needed > r.width()) size *= r.width() / needed
+        textPaint.textSize = size
+        var x = r.left
         levels.forEachIndexed { i, lvl ->
-            val x = r.left + i * w
-            val dot = r.height() * 0.5f
             paint.style = Paint.Style.FILL
             paint.color = levelColor(lvl, accent)
-            canvas.drawCircle(x + dot / 2, r.centerY(), dot / 2, paint)
-            text(labels[i], RectF(x + dot + 0.6f * u, r.top, x + w - 0.6f * u, r.bottom), textSub)
+            canvas.drawCircle(x + dot / 2, r.centerY(), dot / 2 * min(1f, size / (r.height() / 1.15f)) , paint)
+            x += dot + 0.8f * u
+            textPaint.textSize = size
+            val tw = textPaint.measureText(labels[i])
+            text(labels[i], RectF(x, r.top, x + tw + 1f, r.bottom), textSub, maxSize = size)
+            x += tw + spacing
         }
     }
 
