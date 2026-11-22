@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tibber Widget</string>
+    <string name="widget_name">Tibber dashboard</string>
+    <string name="widget_description">Volledig scherm met alle Tibber-gegevens, ververst elke 15 minuten</string>
+</resources>
