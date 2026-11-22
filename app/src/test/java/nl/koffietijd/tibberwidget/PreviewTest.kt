@@ -36,7 +36,11 @@ class PreviewTest {
 
     private fun save(name: String, w: Int, h: Int, s: DashboardState) {
         val bmp = DashboardRenderer(ApplicationProvider.getApplicationContext()).render(w, h, s)
-        File("build/previews").apply { mkdirs() }.resolve("$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        val dir = File("build/previews").apply { mkdirs() }
+        dir.resolve("$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // Kleine versie voor snelle controle in de CI-log.
+        val small = Bitmap.createScaledBitmap(bmp, w / 2, h / 2, true)
+        File("build/previews-small").apply { mkdirs() }.resolve("$name.jpg").outputStream().use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
     }
 
     @Test fun render() {
