@@ -20,12 +20,16 @@ jobs:
       - name: Build
         run: ./gradlew --no-daemon assembleDebug
       - name: Render dashboard previews
+        id: previews
+        continue-on-error: true
         run: ./gradlew --no-daemon testDebugUnitTest
       - uses: actions/upload-artifact@v4
+        if: steps.previews.outcome == 'success'
         with:
           name: dashboard-previews
           path: app/build/previews/*.png
       - name: Print small previews (base64)
+        if: steps.previews.outcome == 'success'
         run: |
           for f in app/build/previews-small/*.jpg; do
             echo "===BEGIN $(basename $f)==="
