@@ -16,6 +16,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -76,6 +77,10 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         val full = RectF(pad, pad, w - pad, h - pad)
         val live = state.live?.takeIf { isLiveFresh(it) }
         val landscape = w > h * 1.15f
+        val timeline = PriceAdvisor.build(home.prices, state.market, now)
+        val rec = PriceAdvisor.recommend(timeline, now.toInstant(), durationHours = 2)
+        val solar = hasSolar(home, live)
+        val showLiveRow = live != null || solar
 
         val headerH = if (landscape) 9f * u else 8f * u
         val footerH = 3.6f * u
@@ -84,24 +89,22 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         val body = RectF(full.left, full.top + headerH + gap, full.right, full.bottom - footerH - gap)
 
         if (landscape) {
-            val leftW = body.width() * 0.42f
+            val leftW = body.width() * 0.45f
             val left = RectF(body.left, body.top, body.left + leftW, body.bottom)
             val right = RectF(left.right + gap, body.top, body.right, body.bottom)
-            val leftParts = stack(left, gap, if (live != null) listOf(4.2f, 2.8f, 3f) else listOf(5f, 0f, 3.2f))
-            priceCard(leftParts[0], home)
-            if (live != null) liveCard(leftParts[1], live, home.currency)
-            tiles(leftParts[2], home, live)
-            val rightParts = stack(right, gap, listOf(6f, 4f))
-            priceChart(rightParts[0], home)
-            usageChart(rightParts[1], home)
-        } else {
-            val weights = if (live != null) listOf(2.3f, 1.5f, 3.5f, 2.2f, 1.7f) else listOf(2.6f, 0f, 4f, 2.4f, 1.8f)
-            val parts = stack(body, gap, weights)
+            val parts = stack(left, gap, listOf(3.4f, 2.6f, if (showLiveRow) 2.6f else 0f, 2f))
             priceCard(parts[0], home)
-            if (live != null) liveCard(parts[1], live, home.currency)
-            priceChart(parts[2], home)
-            usageChart(parts[3], home)
-            tiles(parts[4], home, live)
+            adviceCard(parts[1], rec, timeline, home.currency)
+            if (showLiveRow) liveRow(parts[2], gap, live, home, solar)
+            tiles(parts[3], gap, home, live, solar)
+            priceChart(right, home, timeline, rec)
+        } else {
+            val parts = stack(body, gap, listOf(2.2f, 1.8f, if (showLiveRow) 1.7f else 0f, 3.8f, 1.4f))
+            priceCard(parts[0], home)
+            adviceCard(parts[1], rec, timeline, home.currency)
+            if (showLiveRow) liveRow(parts[2], gap, live, home, solar)
+            priceChart(parts[3], home, timeline, rec)
+            tiles(parts[4], gap, home, live, solar)
         }
     }
 
@@ -182,11 +185,8 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
             rows += "Gemiddeld vandaag" to money(today.map { it.total }.average(), home.currency)
             rows += "Hoogste vandaag" to "${money(maxP.total, home.currency)}  ${maxP.start.atZoneSameInstant(zone).format(hhmm)}"
         }
-        cheapestWindow(prices)?.let { (start, avg) ->
-            val z = start.atZoneSameInstant(zone)
-            val dayWord = if (z.toLocalDate() == now.toLocalDate()) "" else "morgen "
-            rows += "Goedkoopste uur" to "$dayWord${z.format(hhmm)}  ${money(avg, home.currency)}"
-        }
+        val tomorrow = prices.filter { it.start.atZoneSameInstant(zone).toLocalDate() == now.toLocalDate().plusDays(1) }
+        if (tomorrow.isNotEmpty()) rows += "Gemiddeld morgen" to money(tomorrow.map { it.total }.average(), home.currency)
         if (rows.isEmpty()) return
         val rowH = right.height() / rows.size
         rows.forEachIndexed { i, (label, value) ->
@@ -196,97 +196,188 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         }
     }
 
+    /** Stoplicht: is het nu een goed moment voor wasmachine of droger? */
+    private fun adviceCard(r: RectF, rec: Recommendation?, timeline: Timeline, currency: String) {
+        cardBg(r)
+        val inner = inset(r, 3f * u)
+        val green = Color.parseColor("#00C26E")
+        val orange = Color.parseColor("#F2A33A")
+        val red = Color.parseColor("#F0524F")
+
+        // Stoplicht-behuizing
+        val lightH = inner.height()
+        val lightW = min(lightH * 0.4f, inner.width() * 0.2f)
+        val housing = RectF(inner.left, inner.top, inner.left + lightW, inner.top + lightH)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.parseColor("#05080B")
+        canvas.drawRoundRect(housing, lightW * 0.3f, lightW * 0.3f, paint)
+        val lampR = min(lightW * 0.34f, lightH / 6.6f)
+        val lamps = listOf(Advice.RED to red, Advice.ORANGE to orange, Advice.GREEN to green)
+        lamps.forEachIndexed { i, (adv, color) ->
+            val cy = housing.top + lightH * (i + 0.5f) / 3f
+            val cx = housing.centerX()
+            val on = rec?.advice == adv
+            if (on) {
+                paint.color = withAlpha(color, 70)
+                canvas.drawCircle(cx, cy, lampR * 1.35f, paint)
+            }
+            paint.color = if (on) color else withAlpha(color, 45)
+            canvas.drawCircle(cx, cy, lampR, paint)
+        }
+
+        val tx = RectF(housing.right + 3f * u, inner.top, inner.right, inner.bottom)
+        if (rec == null) {
+            text("Wasmachine & droger", rowOf(tx, 0f, 0.22f), textSub)
+            text("Geen advies", rowOf(tx, 0.26f, 0.56f), textMain, bold = true)
+            text("Er zijn nog geen prijzen voor de komende uren", rowOf(tx, 0.62f, 0.8f), textSub)
+            return
+        }
+        val color = when (rec.advice) {
+            Advice.GREEN -> green
+            Advice.ORANGE -> orange
+            Advice.RED -> red
+        }
+        val title = when (rec.advice) {
+            Advice.GREEN -> "Nu aanzetten"
+            Advice.ORANGE -> "Kan, maar wachten loont"
+            Advice.RED -> "Beter wachten"
+        }
+        val horizon = timeline.slots.maxOfOrNull { it.end }
+        val bestZ = rec.bestStart.atZone(zone)
+        val bestIsNow = Duration.between(now.toInstant(), rec.bestStart).toMinutes() < 15
+
+        text("Wasmachine & droger · programma van ${rec.durationHours} uur", rowOf(tx, 0f, 0.17f), textSub)
+        text(title, rowOf(tx, 0.19f, 0.46f), color, bold = true)
+        text("Nu starten: gemiddeld ${money(rec.nowAvg, currency)}/kWh", rowOf(tx, 0.5f, 0.64f), textMain)
+        if (bestIsNow || rec.savingPerKwh < 0.005) {
+            text("Dit is het goedkoopste moment" + (horizon?.let { " tot ${untilLabel(it)}" } ?: ""), rowOf(tx, 0.67f, 0.81f), textMain)
+        } else {
+            val marker = if (rec.bestKind == SlotKind.MARKET) " (marktprijs)" else ""
+            text("Goedkoopst: ${dayWord(bestZ)} ${bestZ.format(hhmm)} · ${money(rec.bestAvg, currency)}/kWh$marker", rowOf(tx, 0.67f, 0.81f), textMain, bold = true)
+            val wash = rec.savingPerKwh * WASH_KWH
+            val dry = rec.savingPerKwh * DRYER_KWH
+            text("Wachten bespaart ± ${money(wash, currency)} per wasbeurt · ${money(dry, currency)} per droogbeurt", rowOf(tx, 0.85f, 1f), textSub)
+            return
+        }
+        text("Gebaseerd op bekende prijzen" + (horizon?.let { " tot ${untilLabel(it)}" } ?: ""), rowOf(tx, 0.85f, 1f), textSub)
+    }
+
+    /** Live verbruik en zonnepanelen naast elkaar (of één van beide over de volle breedte). */
+    private fun liveRow(r: RectF, gap: Float, live: Live?, home: Home, solar: Boolean) {
+        if (live != null && solar) {
+            val half = (r.width() - gap) / 2
+            liveCard(RectF(r.left, r.top, r.left + half, r.bottom), live, home.currency)
+            solarCard(RectF(r.right - half, r.top, r.right, r.bottom), live, home)
+        } else if (live != null) {
+            liveCard(r, live, home.currency)
+        } else {
+            solarCard(r, null, home)
+        }
+    }
+
     private fun liveCard(r: RectF, live: Live, fallbackCurrency: String) {
         cardBg(r)
         val inner = inset(r, 3f * u)
         val currency = live.currency ?: fallbackCurrency
-        val split = inner.left + inner.width() * 0.5f
-        val left = RectF(inner.left, inner.top, split - 2f * u, inner.bottom)
-        val right = RectF(split + 2f * u, inner.top, inner.right, inner.bottom)
-
-        val production = live.powerProduction ?: 0.0
-        val label = "Live verbruik" + (live.timestamp?.let { " · ${it.atZoneSameInstant(zone).format(hhmm)}" } ?: "")
-        text(label, rowOf(left, 0f, 0.25f), textSub)
-        val big = if (production > 0.0 && (live.power ?: 0.0) <= 0.0) "−${watts(production)}" else watts(live.power)
-        text(big, rowOf(left, 0.28f, 0.85f), accent, bold = true)
-        if (production > 0.0) text("Teruglevering ${watts(production)}", rowOf(left, 0.86f, 1f), textSub)
-
-        val rows = listOfNotNull(
-            live.accumulatedConsumption?.let { "Vandaag verbruikt" to "${kwh(it)}" + (live.accumulatedCost?.let { c -> " · ${money(c, currency)}" } ?: "") },
-            live.accumulatedProduction?.takeIf { it > 0.0 }?.let { "Vandaag teruggeleverd" to kwh(it) },
-            if (live.minPower != null || live.maxPower != null)
-                "Min / gem / max" to "${wattsShort(live.minPower)} / ${wattsShort(live.averagePower)} / ${watts(live.maxPower)}"
-            else null,
-        )
-        if (rows.isEmpty()) return
-        val rowH = right.height() / rows.size
-        rows.forEachIndexed { i, (l, v) ->
-            val top = right.top + i * rowH
-            text(l, RectF(right.left, top, right.right, top + rowH * 0.42f), textSub)
-            text(v, RectF(right.left, top + rowH * 0.42f, right.right, top + rowH * 0.92f), textMain, bold = true)
+        val label = "Verbruik nu" + (live.timestamp?.let { " · ${it.atZoneSameInstant(zone).format(hhmm)}" } ?: "")
+        text(label, rowOf(inner, 0f, 0.2f), textSub)
+        text(watts(live.power), rowOf(inner, 0.22f, 0.58f), accent, bold = true)
+        live.accumulatedConsumption?.let {
+            text("Vandaag ${kwh(it)}" + (live.accumulatedCost?.let { c -> " · ${money(c, currency)}" } ?: ""), rowOf(inner, 0.62f, 0.8f), textMain, bold = true)
+        }
+        if (live.minPower != null || live.maxPower != null) {
+            text("min ${wattsShort(live.minPower)} · gem ${wattsShort(live.averagePower)} · max ${watts(live.maxPower)}", rowOf(inner, 0.83f, 1f), textSub)
         }
     }
 
-    private fun priceChart(r: RectF, home: Home) {
+    private fun solarCard(r: RectF, live: Live?, home: Home) {
         cardBg(r)
         val inner = inset(r, 3f * u)
-        val todayDate = now.toLocalDate()
-        val tomorrowDate = todayDate.plusDays(1)
-        val points = home.prices.filter {
-            val d = it.start.atZoneSameInstant(zone).toLocalDate()
-            d == todayDate || d == tomorrowDate
+        val sun = Color.parseColor("#FFC93C")
+        val label = "Zonnepanelen · teruglevering"
+        text(label, rowOf(inner, 0f, 0.2f), textSub)
+        val nowW = live?.powerProduction
+        text(if (nowW != null) watts(nowW) else "–", rowOf(inner, 0.22f, 0.58f), sun, bold = true)
+
+        val today = now.toLocalDate()
+        val hourlyToday = home.production.filter { it.from.atZoneSameInstant(zone).toLocalDate() == today && it.kwh != null }
+        val kwhToday = live?.accumulatedProduction ?: hourlyToday.takeIf { it.isNotEmpty() }?.sumOf { it.kwh ?: 0.0 }
+        val rewardToday = live?.accumulatedReward ?: hourlyToday.takeIf { it.isNotEmpty() }?.sumOf { it.cost ?: 0.0 }
+        if (kwhToday != null) {
+            text("Vandaag ${kwh(kwhToday)}" + (rewardToday?.let { " · ${money(it, home.currency)}" } ?: ""), rowOf(inner, 0.62f, 0.8f), textMain, bold = true)
         }
-        val hasTomorrow = points.any { it.start.atZoneSameInstant(zone).toLocalDate() == tomorrowDate }
+        text("teruggeleverd aan het net", rowOf(inner, 0.83f, 1f), textSub)
+    }
+
+    private fun priceChart(r: RectF, home: Home, timeline: Timeline, rec: Recommendation?) {
+        cardBg(r)
+        val inner = inset(r, 3f * u)
+        val start = now.truncatedTo(ChronoUnit.HOURS).minusHours(3)
+        val limit = now.plusHours(48)
+        val slots = timeline.slots.filter { it.end.isAfter(start.toInstant()) && it.start.isBefore(limit.toInstant()) }
+        val endInstant = slots.maxOfOrNull { it.end } ?: now.plusHours(1).toInstant()
+        val end = ZonedDateTime.ofInstant(endInstant, zone)
+        val hasMarket = slots.any { it.kind == SlotKind.MARKET }
+
         val titleRect = RectF(inner.left, inner.top, inner.right, inner.top + 7f * u)
-        text(if (hasTomorrow) "Prijzen vandaag & morgen" else "Prijzen vandaag", RectF(titleRect.left, titleRect.top, titleRect.left + titleRect.width() * 0.55f, titleRect.bottom), textMain, bold = true)
-        if (!hasTomorrow) {
-            text("Morgen beschikbaar rond 13:00", RectF(titleRect.left + titleRect.width() * 0.58f, titleRect.top + titleRect.height() * 0.2f, titleRect.right, titleRect.bottom), textSub, align = Paint.Align.RIGHT)
+        val hours = Duration.between(now, end).toHours()
+        text("Prijzen komende ${max(1L, hours)} uur", RectF(titleRect.left, titleRect.top, titleRect.left + titleRect.width() * 0.6f, titleRect.bottom), textMain, bold = true)
+        val tomorrowKnown = slots.any { it.start.atZone(zone).toLocalDate() == now.toLocalDate().plusDays(1) }
+        if (!tomorrowKnown) {
+            text("Morgen bekend rond 13:00", RectF(titleRect.left + titleRect.width() * 0.62f, titleRect.top + titleRect.height() * 0.2f, titleRect.right, titleRect.bottom), textSub, align = Paint.Align.RIGHT)
         }
         val legendRect = RectF(inner.left, titleRect.bottom + 1f * u, inner.right, titleRect.bottom + 4.2f * u)
-        legend(legendRect)
-        if (points.isEmpty()) {
-            text("Geen prijsgegevens", RectF(inner.left, titleRect.bottom, inner.right, inner.bottom), textSub, align = Paint.Align.CENTER)
+        legend(legendRect, hasMarket)
+        if (slots.isEmpty()) {
+            text("Geen prijsgegevens", RectF(inner.left, legendRect.bottom, inner.right, inner.bottom), textSub, align = Paint.Align.CENTER)
             return
         }
 
         val plot = RectF(inner.left + 10f * u, legendRect.bottom + 3.5f * u, inner.right, inner.bottom - 4.5f * u)
-        val minV = min(0.0, points.minOf { it.total })
-        val maxV = niceCeil(points.maxOf { it.total })
+        val minV = min(0.0, slots.minOf { it.price })
+        val maxV = niceCeil(slots.maxOf { it.price })
         val range = (maxV - minV).takeIf { it > 0 } ?: 1.0
         fun y(v: Double) = (plot.bottom - (v - minV) / range * plot.height()).toFloat()
 
-        // Rasterlijnen + y-as labels
-        val ticks = 4
-        for (i in 0..ticks) {
-            val v = minV + range * i / ticks
+        for (i in 0..4) {
+            val v = minV + range * i / 4
             val yy = y(v)
             line(plot.left, yy, plot.right, yy, grid, 0.15f * u)
             text(money(v, home.currency, 2), RectF(inner.left, yy - 2f * u, plot.left - 1.2f * u, yy + 2f * u), textSub, align = Paint.Align.RIGHT, maxSize = 2.6f * u)
         }
 
-        // Tijd-as: van begin vandaag tot eind van laatste slot
-        val dayStart = todayDate.atStartOfDay(zone)
-        val end = (if (hasTomorrow) tomorrowDate.plusDays(1) else tomorrowDate).atStartOfDay(zone)
-        val totalSec = Duration.between(dayStart, end).seconds.toFloat()
-        fun x(t: ZonedDateTime) = plot.left + Duration.between(dayStart, t).seconds / totalSec * plot.width()
+        val totalSec = Duration.between(start, end).seconds.toFloat().coerceAtLeast(1f)
+        fun x(t: java.time.Instant) = plot.left + Duration.between(start.toInstant(), t).seconds / totalSec * plot.width()
 
-        val slotSec = slotSeconds(points)
-        val barW = slotSec / totalSec * plot.width()
-        val gapW = if (barW > 4f) barW * 0.18f else 0f
-        val current = currentPrice(points)
-        points.forEach { p ->
-            val start = p.start.atZoneSameInstant(zone)
-            val x0 = x(start) + gapW / 2
-            val x1 = x0 + barW - gapW
-            val isPast = start.plusSeconds(slotSec.toLong()).isBefore(now) || start.plusSeconds(slotSec.toLong()).isEqual(now)
-            var color = levelColor(p.level, accent)
+        // Advies-venster als groene band achter de staven.
+        if (rec != null) {
+            val bx0 = x(rec.bestStart).coerceAtLeast(plot.left)
+            val bx1 = x(rec.bestStart.plusSeconds(rec.durationHours * 3600L)).coerceAtMost(plot.right)
+            paint.style = Paint.Style.FILL
+            paint.color = withAlpha(Color.parseColor("#00C26E"), 40)
+            canvas.drawRect(bx0, plot.top, bx1, plot.bottom, paint)
+            text("goedkoopst", RectF(bx0, plot.bottom - 2.6f * u, max(bx1, bx0 + 14f * u), plot.bottom - 0.2f * u), Color.parseColor("#00C26E"), bold = true, maxSize = 2.4f * u)
+        }
+
+        val avg = slots.map { it.price }.average()
+        val currentStart = slots.lastOrNull { !it.start.isAfter(now.toInstant()) }?.start
+        slots.forEach { s ->
+            val barW = s.minutes * 60f / totalSec * plot.width()
+            val gapW = if (barW > 4f) barW * 0.18f else 0f
+            val x0 = max(plot.left, x(s.start) + gapW / 2)
+            val x1 = min(plot.right, x(s.start) + barW - gapW / 2)
+            if (x1 <= x0) return@forEach
+            val level = s.level ?: relativeLevel(s.price, avg)
+            var color = levelColor(level, accent)
+            val isPast = !s.end.isAfter(now.toInstant())
             if (isPast) color = withAlpha(color, 80)
+            if (s.kind == SlotKind.MARKET) color = withAlpha(color, 150)
+            val top = y(max(s.price, 0.0))
+            val bottom = y(min(s.price, 0.0))
             paint.style = Paint.Style.FILL
             paint.color = color
-            val top = y(max(p.total, 0.0))
-            val bottom = y(min(p.total, 0.0))
             canvas.drawRect(x0, top, max(x1, x0 + 1f), max(bottom, top + 1f), paint)
-            if (p == current) {
+            if (s.start == currentStart) {
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = 0.4f * u
                 paint.color = Color.WHITE
@@ -295,120 +386,100 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         }
 
         // "Nu"-lijn
-        val nx = x(now)
-        if (nx in plot.left..plot.right) {
-            paint.style = Paint.Style.STROKE
-            paint.color = Color.WHITE
-            paint.strokeWidth = 0.25f * u
-            paint.pathEffect = DashPathEffect(floatArrayOf(u, u), 0f)
-            canvas.drawLine(nx, plot.top, nx, plot.bottom, paint)
-            paint.pathEffect = null
-            text("nu", RectF(nx - 5f * u, plot.top - 2.4f * u, nx + 5f * u, plot.top), Color.WHITE, align = Paint.Align.CENTER, bold = true)
-        }
+        val nx = x(now.toInstant())
+        paint.style = Paint.Style.STROKE
+        paint.color = Color.WHITE
+        paint.strokeWidth = 0.25f * u
+        paint.pathEffect = DashPathEffect(floatArrayOf(u, u), 0f)
+        canvas.drawLine(nx, plot.top, nx, plot.bottom, paint)
+        paint.pathEffect = null
+        text("nu", RectF(nx - 5f * u, plot.top - 2.4f * u, nx + 5f * u, plot.top), Color.WHITE, align = Paint.Align.CENTER, bold = true)
 
-        // Middernacht-scheiding
-        if (hasTomorrow) {
-            val mx = x(tomorrowDate.atStartOfDay(zone))
+        // Daggrenzen
+        var midnight = start.toLocalDate().plusDays(1).atStartOfDay(zone)
+        while (midnight.isBefore(end)) {
+            val mx = x(midnight.toInstant())
             line(mx, plot.top, mx, plot.bottom + 1f * u, textSub, 0.2f * u)
-            text("morgen", RectF(mx + 0.8f * u, plot.top, mx + 14f * u, plot.top + 2.8f * u), textSub)
+            text(dayWord(midnight), RectF(mx + 0.8f * u, plot.top, mx + 16f * u, plot.top + 2.8f * u), textSub)
+            midnight = midnight.plusDays(1)
         }
 
         // X-as labels
-        val stepH = if (hasTomorrow) (if (plot.width() / u > 120) 3 else 6) else 3
-        var t = dayStart
-        while (!t.isAfter(end.minusHours(1))) {
+        val stepH = when {
+            hours > 30 -> 6
+            hours > 14 -> 3
+            else -> 2
+        }
+        var t = start
+        while (t.isBefore(end)) {
             if (t.hour % stepH == 0) {
-                val xx = x(t)
+                val xx = x(t.toInstant())
                 text(t.format(DateTimeFormatter.ofPattern("HH", locale)), RectF(xx - 4f * u, plot.bottom + 0.8f * u, xx + 4f * u, inner.bottom), textSub, align = Paint.Align.CENTER, maxSize = 2.8f * u)
             }
             t = t.plusHours(1)
         }
     }
 
-    private fun usageChart(r: RectF, home: Home) {
-        cardBg(r)
-        val inner = inset(r, 3f * u)
-        val data = home.hourly.filter { it.kwh != null }.takeLast(24)
-        val titleRect = RectF(inner.left, inner.top, inner.right, inner.top + 6.5f * u)
-        val totalKwh = data.sumOf { it.kwh ?: 0.0 }
-        val totalCost = data.sumOf { it.cost ?: 0.0 }
-        text("Verbruik per uur · laatste 24 uur", RectF(titleRect.left, titleRect.top, titleRect.left + titleRect.width() * 0.56f, titleRect.bottom), textMain, bold = true)
-        if (data.isNotEmpty()) {
-            text("${kwh(totalKwh)} · ${money(totalCost, home.currency)}", RectF(titleRect.left + titleRect.width() * 0.62f, titleRect.top, titleRect.right, titleRect.bottom), accent, bold = true, align = Paint.Align.RIGHT)
-        }
-        if (data.isEmpty()) {
-            text("Nog geen verbruiksgegevens", RectF(inner.left, titleRect.bottom, inner.right, inner.bottom), textSub, align = Paint.Align.CENTER)
-            return
-        }
-        val plot = RectF(inner.left + 10f * u, titleRect.bottom + 2f * u, inner.right, inner.bottom - 4.5f * u)
-        val maxV = niceCeil(data.maxOf { it.kwh ?: 0.0 }.coerceAtLeast(0.1))
-        for (i in 0..2) {
-            val v = maxV * i / 2
-            val yy = plot.bottom - (v / maxV * plot.height()).toFloat()
-            line(plot.left, yy, plot.right, yy, grid, 0.15f * u)
-            text(fmt(v, if (maxV < 1) 2 else 1) + " kWh", RectF(inner.left, yy - 2f * u, plot.left - 1.2f * u, yy + 2f * u), textSub, align = Paint.Align.RIGHT, maxSize = 2.4f * u)
-        }
-        val n = data.size
-        val slotW = plot.width() / n
-        val gapW = slotW * 0.2f
-        data.forEachIndexed { i, d ->
-            val x0 = plot.left + i * slotW + gapW / 2
-            val hh = ((d.kwh ?: 0.0) / maxV * plot.height()).toFloat()
-            paint.style = Paint.Style.FILL
-            paint.color = accent
-            canvas.drawRoundRect(RectF(x0, plot.bottom - hh, x0 + slotW - gapW, plot.bottom), 0.4f * u, 0.4f * u, paint)
-            val z = d.from.atZoneSameInstant(zone)
-            if (z.hour % 3 == 0) {
-                val cx = x0 + (slotW - gapW) / 2
-                text(z.format(DateTimeFormatter.ofPattern("HH", locale)), RectF(cx - 4f * u, plot.bottom + 0.8f * u, cx + 4f * u, inner.bottom), textSub, align = Paint.Align.CENTER, maxSize = 2.8f * u)
+    private fun tiles(r: RectF, gap: Float, home: Home, live: Live?, solar: Boolean) {
+        val yesterday = now.toLocalDate().minusDays(1)
+        fun sumFor(list: List<Usage>, day: java.time.LocalDate): Pair<Double, Double>? =
+            list.filter { it.kwh != null && it.from.atZoneSameInstant(zone).toLocalDate() == day }
+                .takeIf { it.isNotEmpty() }?.let { l -> l.sumOf { it.kwh ?: 0.0 } to l.sumOf { it.cost ?: 0.0 } }
+
+        val usedYesterday = sumFor(home.daily, yesterday) ?: sumFor(home.hourly, yesterday)
+        data class Tile(val label: String, val main: String, val sub: String, val subColor: Int)
+        val items = ArrayList<Tile>()
+        items += Tile("Gisteren verbruikt", usedYesterday?.let { kwh(it.first) } ?: "–", usedYesterday?.let { money(it.second, home.currency) } ?: "", accent)
+        if (solar) {
+            val prodYesterday = sumFor(home.production, yesterday)
+            val sun = Color.parseColor("#FFC93C")
+            items += Tile("Gisteren teruggeleverd", prodYesterday?.let { kwh(it.first) } ?: "–", prodYesterday?.let { money(it.second, home.currency) } ?: "", sun)
+            if (usedYesterday != null && prodYesterday != null) {
+                val net = usedYesterday.second - prodYesterday.second
+                items += Tile("Netto kosten gisteren", money(net, home.currency), "verbruik − opbrengst", textSub)
             }
+        } else if (live?.accumulatedConsumption != null) {
+            items += Tile("Vandaag verbruikt", kwh(live.accumulatedConsumption), live.accumulatedCost?.let { money(it, home.currency) } ?: "", accent)
         }
-    }
-
-    private fun tiles(r: RectF, home: Home, live: Live?) {
-        val gap = 2f * u
-        val today = now.toLocalDate()
-        val yesterday = today.minusDays(1)
-        val thisMonth = today.withDayOfMonth(1)
-        val lastMonth = thisMonth.minusMonths(1)
-
-        fun daySum(filter: (LocalDate) -> Boolean): Pair<Double, Double>? {
-            val list = home.daily.filter { it.kwh != null && filter(it.from.atZoneSameInstant(zone).toLocalDate()) }
-            if (list.isEmpty()) return null
-            return list.sumOf { it.kwh ?: 0.0 } to list.sumOf { it.cost ?: 0.0 }
-        }
-
-        val yest = daySum { it == yesterday }
-            ?: home.hourly.filter { it.kwh != null && it.from.atZoneSameInstant(zone).toLocalDate() == yesterday }
-                .takeIf { it.isNotEmpty() }?.let { l -> l.sumOf { it.kwh ?: 0.0 } to l.sumOf { it.cost ?: 0.0 } }
-
-        // Vandaag: live (Pulse) of uit de uurdata
-        val todayUse = live?.accumulatedConsumption?.let { it to (live.accumulatedCost ?: 0.0) }
-            ?: home.hourly.filter { it.kwh != null && it.from.atZoneSameInstant(zone).toLocalDate() == today }
-                .takeIf { it.isNotEmpty() }?.let { l -> l.sumOf { it.kwh ?: 0.0 } to l.sumOf { it.cost ?: 0.0 } }
-
-        val monthBase = daySum { !it.isBefore(thisMonth) && it.isBefore(today) }
-        val month = when {
-            monthBase == null && todayUse == null -> null
-            else -> ((monthBase?.first ?: 0.0) + (todayUse?.first ?: 0.0)) to ((monthBase?.second ?: 0.0) + (todayUse?.second ?: 0.0))
-        }
-        val prevMonth = daySum { !it.isBefore(lastMonth) && it.isBefore(thisMonth) }
-
-        val monthName = DateTimeFormatter.ofPattern("MMMM", locale)
-        val items = listOf(
-            "Gisteren" to yest,
-            now.format(monthName).replaceFirstChar { it.titlecase(locale) } to month,
-            lastMonth.format(monthName).replaceFirstChar { it.titlecase(locale) } to prevMonth,
-        )
         val tileW = (r.width() - gap * (items.size - 1)) / items.size
-        items.forEachIndexed { i, (label, value) ->
+        items.forEachIndexed { i, tile ->
             val tr = RectF(r.left + i * (tileW + gap), r.top, r.left + i * (tileW + gap) + tileW, r.bottom)
             cardBg(tr)
             val inner = inset(tr, 2.5f * u)
-            text(label, rowOf(inner, 0f, 0.26f), textSub)
-            text(value?.let { kwh(it.first) } ?: "–", rowOf(inner, 0.3f, 0.68f), textMain, bold = true)
-            text(value?.let { money(it.second, home.currency) } ?: "", rowOf(inner, 0.72f, 1f), accent, bold = true)
+            text(tile.label, rowOf(inner, 0f, 0.26f), textSub)
+            text(tile.main, rowOf(inner, 0.3f, 0.68f), textMain, bold = true)
+            text(tile.sub, rowOf(inner, 0.72f, 1f), tile.subColor, bold = tile.subColor != textSub)
         }
+    }
+
+    private fun hasSolar(home: Home, live: Live?): Boolean =
+        home.production.any { (it.kwh ?: 0.0) > 0.0 } ||
+            (live?.accumulatedProduction ?: 0.0) > 0.0 ||
+            (live?.powerProduction ?: 0.0) > 0.0
+
+    /** Prijsniveau voor omgerekende marktprijzen (Tibber geeft daar zelf geen niveau voor). */
+    private fun relativeLevel(price: Double, avg: Double): String {
+        val ratio = if (avg > 0) price / avg else 1.0
+        return when {
+            ratio < 0.7 -> "VERY_CHEAP"
+            ratio < 0.9 -> "CHEAP"
+            ratio < 1.15 -> "NORMAL"
+            ratio < 1.4 -> "EXPENSIVE"
+            else -> "VERY_EXPENSIVE"
+        }
+    }
+
+    private fun dayWord(t: ZonedDateTime): String = when (ChronoUnit.DAYS.between(now.toLocalDate(), t.toLocalDate())) {
+        0L -> "vandaag"
+        1L -> "morgen"
+        2L -> "overmorgen"
+        else -> t.format(DateTimeFormatter.ofPattern("EEEE", locale))
+    }
+
+    /** "morgen 24:00" in plaats van "overmorgen 00:00". */
+    private fun untilLabel(end: java.time.Instant): String {
+        val z = end.atZone(zone)
+        return if (z.hour == 0 && z.minute == 0) "${dayWord(z.minusDays(1))} 24:00" else "${dayWord(z)} ${z.format(hhmm)}"
     }
 
     private fun message(w: Int, h: Int, title: String, sub: String) {
@@ -452,22 +523,6 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         if (prices.size < 2) return 3600f
         val diffs = prices.zipWithNext { a, b -> Duration.between(a.start, b.start).seconds }.filter { it > 0 }
         return (diffs.minOrNull() ?: 3600L).toFloat()
-    }
-
-    /** Goedkoopste aaneengesloten uur vanaf nu (gemiddelde prijs). */
-    private fun cheapestWindow(prices: List<PricePoint>): Pair<java.time.OffsetDateTime, Double>? {
-        val slot = slotSeconds(prices).toInt()
-        val perHour = max(1, 3600 / slot)
-        val cur = currentPrice(prices)
-        val upcoming = prices.filter { !it.start.toInstant().isBefore(now.toInstant()) || it == cur }
-        if (upcoming.size < perHour) return null
-        var best: Pair<java.time.OffsetDateTime, Double>? = null
-        for (i in 0..upcoming.size - perHour) {
-            val window = upcoming.subList(i, i + perHour)
-            val avg = window.map { it.total }.average()
-            if (best == null || avg < best.second) best = window.first().start to avg
-        }
-        return best
     }
 
     private fun isLiveFresh(live: Live): Boolean {
@@ -524,16 +579,18 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         text(label, inset(pr, r.height() * 0.18f), color, bold = true, align = Paint.Align.CENTER)
     }
 
-    private fun legend(r: RectF) {
+    private fun legend(r: RectF, withMarket: Boolean = false) {
         val levels = listOf("VERY_CHEAP", "CHEAP", "NORMAL", "EXPENSIVE", "VERY_EXPENSIVE")
         val labels = listOf("zeer goedkoop", "goedkoop", "normaal", "duur", "zeer duur")
+        val extra = if (withMarket) "· licht = marktprijs omgerekend" else null
         val dot = r.height() * 0.55f
         val spacing = 2.5f * u
         // Eén lettergrootte voor alle labels, zodat alles in één regel past.
         textPaint.typeface = normalTf
         var size = r.height() / 1.15f
         textPaint.textSize = size
-        val needed = labels.sumOf { textPaint.measureText(it).toDouble() }.toFloat() + levels.size * (dot + 0.8f * u) + (levels.size - 1) * spacing
+        val needed = labels.sumOf { textPaint.measureText(it).toDouble() }.toFloat() + levels.size * (dot + 0.8f * u) + (levels.size - 1) * spacing +
+            (extra?.let { textPaint.measureText(it) + spacing } ?: 0f)
         if (needed > r.width()) size *= r.width() / needed
         textPaint.textSize = size
         var x = r.left
@@ -547,6 +604,7 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
             text(labels[i], RectF(x, r.top, x + tw + 1f, r.bottom), textSub, maxSize = size)
             x += tw + spacing
         }
+        if (extra != null) text(extra, RectF(x, r.top, r.right, r.bottom), textSub, maxSize = size)
     }
 
     private fun cardBg(r: RectF) {
@@ -633,5 +691,11 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
             else -> 10.0
         }
         return ceil(nice * base * 1000) / 1000
+    }
+
+    companion object {
+        /** Gemiddeld verbruik per wasbeurt en droogbeurt (kWh), voor de besparingsindicatie. */
+        const val WASH_KWH = 1.0
+        const val DRYER_KWH = 2.5
     }
 }

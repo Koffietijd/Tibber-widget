@@ -25,6 +25,7 @@ data class Live(
     val accumulatedConsumption: Double?,
     val accumulatedProduction: Double?,
     val accumulatedCost: Double?,
+    val accumulatedReward: Double?,
     val minPower: Double?,
     val averagePower: Double?,
     val maxPower: Double?,
@@ -41,6 +42,8 @@ data class Home(
     val prices: List<PricePoint>,
     val hourly: List<Usage>,
     val daily: List<Usage>,
+    /** Teruglevering per uur (kWh) met opbrengst (€). */
+    val production: List<Usage>,
 )
 
 data class HomeRef(val id: String, val label: String)
@@ -98,6 +101,7 @@ object Parser {
             prices = prices.distinctBy { it.start }.sortedBy { it.start },
             hourly = parseUsage(h.optJSONObject("hourly")?.optJSONArray("nodes")),
             daily = parseUsage(h.optJSONObject("daily")?.optJSONArray("nodes")),
+            production = parseUsage(h.optJSONObject("production")?.optJSONArray("nodes"), "production", "profit"),
         )
     }
 
@@ -111,12 +115,12 @@ object Parser {
         }
     }
 
-    private fun parseUsage(arr: JSONArray?): List<Usage> {
+    private fun parseUsage(arr: JSONArray?, amountKey: String = "consumption", moneyKey: String = "cost"): List<Usage> {
         if (arr == null) return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val from = o.optStringOrNull("from")?.let(::parseTime) ?: return@mapNotNull null
-            Usage(from, o.optDoubleOrNull("consumption"), o.optDoubleOrNull("cost"))
+            Usage(from, o.optDoubleOrNull(amountKey), o.optDoubleOrNull(moneyKey))
         }.sortedBy { it.from }
     }
 
@@ -129,6 +133,7 @@ object Parser {
             accumulatedConsumption = o.optDoubleOrNull("accumulatedConsumption"),
             accumulatedProduction = o.optDoubleOrNull("accumulatedProduction"),
             accumulatedCost = o.optDoubleOrNull("accumulatedCost"),
+            accumulatedReward = o.optDoubleOrNull("accumulatedReward"),
             minPower = o.optDoubleOrNull("minPower"),
             averagePower = o.optDoubleOrNull("averagePower"),
             maxPower = o.optDoubleOrNull("maxPower"),

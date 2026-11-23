@@ -22,6 +22,14 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_LIVE, null)
         set(value) = sp.edit().putString(KEY_LIVE, value).apply()
 
+    var cachedMarket: String?
+        get() = sp.getString(KEY_MARKET, null)
+        set(value) = sp.edit().putString(KEY_MARKET, value).apply()
+
+    var marketFetchedAt: Long
+        get() = sp.getLong(KEY_MARKET_FETCHED, 0L)
+        set(value) = sp.edit().putLong(KEY_MARKET_FETCHED, value).apply()
+
     var fetchedAt: Long
         get() = sp.getLong(KEY_FETCHED, 0L)
         set(value) = sp.edit().putLong(KEY_FETCHED, value).apply()
@@ -45,6 +53,8 @@ class Prefs(context: Context) {
         private const val KEY_VIEWER = "cached_viewer"
         private const val KEY_LIVE = "cached_live"
         private const val KEY_FETCHED = "fetched_at"
+        private const val KEY_MARKET = "cached_market"
+        private const val KEY_MARKET_FETCHED = "market_fetched_at"
         private const val KEY_ERROR = "last_error"
         private const val KEY_ATTEMPT = "last_attempt"
     }

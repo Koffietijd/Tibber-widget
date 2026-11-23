@@ -46,7 +46,7 @@ object TibberApi {
                 }
               }
               hourly: consumption(resolution: HOURLY, last: 48) { nodes { from consumption cost } }
-              daily: consumption(resolution: DAILY, last: 62) { nodes { from consumption cost } }
+              daily: consumption(resolution: DAILY, last: 3) { nodes { from consumption cost } }
             }
           }
         }
@@ -65,6 +65,15 @@ object TibberApi {
             post(token, query(null))
         }
     }
+
+    /**
+     * Teruglevering (zonnepanelen) per uur. Apart opgevraagd zodat een account zonder
+     * teruglevering de rest van de gegevens niet laat mislukken.
+     */
+    fun fetchProduction(token: String): JSONObject = post(
+        token,
+        "{ viewer { homes { id production(resolution: HOURLY, last: 48) { nodes { from production profit } } } } }",
+    )
 
     private fun post(token: String, query: String): JSONObject {
         val body = JSONObject().put("query", query).toString()
@@ -112,7 +121,7 @@ object TibberApi {
                     subscription {
                       liveMeasurement(homeId: "$homeId") {
                         timestamp power powerProduction accumulatedConsumption accumulatedProduction
-                        accumulatedCost minPower averagePower maxPower currency
+                        accumulatedCost accumulatedReward minPower averagePower maxPower currency
                       }
                     }
                 """.trimIndent()
