@@ -246,20 +246,19 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         val bestZ = rec.bestStart.atZone(zone)
         val bestIsNow = Duration.between(now.toInstant(), rec.bestStart).toMinutes() < 15
 
-        text("Wasmachine & droger · programma van ${rec.durationHours} uur", rowOf(tx, 0f, 0.17f), textSub)
+        text("Wasmachine & droger · ${rec.durationHours} uur", rowOf(tx, 0f, 0.17f), textSub)
         text(title, rowOf(tx, 0.19f, 0.46f), color, bold = true)
-        text("Nu starten: gemiddeld ${money(rec.nowAvg, currency)}/kWh", rowOf(tx, 0.5f, 0.64f), textMain)
+        text("Nu starten: ${money(rec.nowAvg, currency)}/kWh", rowOf(tx, 0.5f, 0.65f), textMain)
         if (bestIsNow || rec.savingPerKwh < 0.005) {
-            text("Dit is het goedkoopste moment" + (horizon?.let { " tot ${untilLabel(it)}" } ?: ""), rowOf(tx, 0.67f, 0.81f), textMain)
+            text("Goedkoopste moment" + (horizon?.let { " tot ${untilLabel(it)}" } ?: ""), rowOf(tx, 0.68f, 0.83f), textMain, bold = true)
+            text("Op basis van alle bekende prijzen", rowOf(tx, 0.86f, 1f), textSub)
         } else {
-            val marker = if (rec.bestKind == SlotKind.MARKET) " (marktprijs)" else ""
-            text("Goedkoopst: ${dayWord(bestZ)} ${bestZ.format(hhmm)} · ${money(rec.bestAvg, currency)}/kWh$marker", rowOf(tx, 0.67f, 0.81f), textMain, bold = true)
+            val approx = if (rec.bestKind == SlotKind.MARKET) "≈ " else ""
+            text("Goedkoopst: ${dayWord(bestZ)} ${bestZ.format(hhmm)} · $approx${money(rec.bestAvg, currency)}/kWh", rowOf(tx, 0.68f, 0.83f), textMain, bold = true)
             val wash = rec.savingPerKwh * WASH_KWH
             val dry = rec.savingPerKwh * DRYER_KWH
-            text("Wachten bespaart ± ${money(wash, currency)} per wasbeurt · ${money(dry, currency)} per droogbeurt", rowOf(tx, 0.85f, 1f), textSub)
-            return
+            text("Wachten bespaart ± ${money(wash, currency)} was · ${money(dry, currency)} droger", rowOf(tx, 0.86f, 1f), textSub)
         }
-        text("Gebaseerd op bekende prijzen" + (horizon?.let { " tot ${untilLabel(it)}" } ?: ""), rowOf(tx, 0.85f, 1f), textSub)
     }
 
     /** Live verbruik en zonnepanelen naast elkaar (of één van beide over de volle breedte). */
@@ -297,16 +296,22 @@ class DashboardRenderer(@Suppress("unused") private val context: Context) {
         val label = "Zonnepanelen · teruglevering"
         text(label, rowOf(inner, 0f, 0.2f), textSub)
         val nowW = live?.powerProduction
-        text(if (nowW != null) watts(nowW) else "–", rowOf(inner, 0.22f, 0.58f), sun, bold = true)
-
         val today = now.toLocalDate()
         val hourlyToday = home.production.filter { it.from.atZoneSameInstant(zone).toLocalDate() == today && it.kwh != null }
         val kwhToday = live?.accumulatedProduction ?: hourlyToday.takeIf { it.isNotEmpty() }?.sumOf { it.kwh ?: 0.0 }
         val rewardToday = live?.accumulatedReward ?: hourlyToday.takeIf { it.isNotEmpty() }?.sumOf { it.cost ?: 0.0 }
-        if (kwhToday != null) {
-            text("Vandaag ${kwh(kwhToday)}" + (rewardToday?.let { " · ${money(it, home.currency)}" } ?: ""), rowOf(inner, 0.62f, 0.8f), textMain, bold = true)
+        if (nowW != null) {
+            text(watts(nowW), rowOf(inner, 0.22f, 0.58f), sun, bold = true)
+            if (kwhToday != null) {
+                text("Vandaag ${kwh(kwhToday)}" + (rewardToday?.let { " · ${money(it, home.currency)}" } ?: ""), rowOf(inner, 0.62f, 0.8f), textMain, bold = true)
+            }
+            text("teruggeleverd aan het net", rowOf(inner, 0.83f, 1f), textSub)
+        } else {
+            // Zonder Pulse: geen live waarde, toon de teruglevering van vandaag groot.
+            text(kwhToday?.let { kwh(it) } ?: "–", rowOf(inner, 0.22f, 0.58f), sun, bold = true)
+            text("vandaag teruggeleverd" + (rewardToday?.let { " · ${money(it, home.currency)}" } ?: ""), rowOf(inner, 0.62f, 0.8f), textMain, bold = true)
+            text("Tibber levert deze cijfers met vertraging", rowOf(inner, 0.83f, 1f), textSub)
         }
-        text("teruggeleverd aan het net", rowOf(inner, 0.83f, 1f), textSub)
     }
 
     private fun priceChart(r: RectF, home: Home, timeline: Timeline, rec: Recommendation?) {

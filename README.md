@@ -6,11 +6,30 @@ aan de muur te hangen.
 ## Wat staat er op het scherm
 
 - **Stroomprijs nu**: prijs per kWh, prijsniveau (zeer goedkoop … zeer duur), opbouw uit energie en belasting
-- **Vandaag**: laagste, gemiddelde en hoogste prijs, en het goedkoopste uur dat nog komt
-- **Live verbruik** (alleen met Tibber Pulse): vermogen nu, verbruik en kosten vandaag, min/gem/max, teruglevering
-- **Prijsgrafiek vandaag en morgen**: per kwartier of per uur, met kleur per prijsniveau en een lijn bij "nu"
-- **Verbruik per uur** over de laatste 24 uur, met totaal in kWh en euro
-- **Totalen**: gisteren, deze maand en vorige maand (kWh en kosten)
+- **Vandaag**: laagste, gemiddelde en hoogste prijs, en het gemiddelde van morgen zodra dat bekend is
+- **Stoplicht voor wasmachine en droger**: groen (nu aanzetten), oranje (kan, maar wachten loont) of rood
+  (beter wachten). Je ziet het goedkoopste startmoment en hoeveel wachten bespaart. De berekening gaat uit
+  van een programma van 2 uur.
+- **Live verbruik** (Tibber Pulse): vermogen nu, verbruik en kosten vandaag, min/gem/max
+- **Zonnepanelen**: teruglevering nu (Pulse), vandaag en gisteren, met opbrengst in euro
+- **Prijsgrafiek** van de komende uren, met het goedkoopste moment gemarkeerd
+- **Gisteren**: verbruik, teruglevering en netto kosten
+
+### Welke prijzen gebruikt het stoplicht?
+
+Alleen prijzen die al gepubliceerd zijn. Er wordt **geen verwachting** gemaakt op basis van het verleden.
+
+1. Tibber-prijzen van vandaag, en van morgen zodra Tibber die heeft (rond 13:00).
+2. Europese day-ahead marktprijzen (EPEX, Nederland) via [energy-charts.info](https://energy-charts.info)
+   (CC BY 4.0). Staat de marktprijs van morgen al online maar nog niet bij Tibber, dan rekent de app hem om
+   naar je Tibber-prijs. De omrekening wordt automatisch afgeleid uit je eigen Tibber-prijzen van vandaag
+   (btw-factor plus vaste opslagen). In de grafiek zijn deze balken lichter, en in het advies staat er "≈" voor.
+
+De horizon is daarmee maximaal tot middernacht morgen. Een verwachting voor 48 uur bestaat niet als
+gepubliceerde marktdata.
+
+Let op: Tibber Pulse meet aan de meter. "Teruglevering" is wat je zonnepanelen aan het net leveren, dus
+zonder de stroom die je zelf direct gebruikt.
 
 De widget past zich aan elk formaat aan, staand en liggend. Hij ververst **elke 15 minuten**
 automatisch. Tik op de widget om meteen te verversen.
